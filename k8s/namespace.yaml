@@ -1,0 +1,10 @@
+# =============================================================================
+# Namespace for LLM Firewall
+# =============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: llm-firewall
+  labels:
+    name: llm-firewall
+    environment: production

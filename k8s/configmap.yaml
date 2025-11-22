@@ -1,0 +1,50 @@
+# =============================================================================
+# ConfigMap for LLM Firewall Configuration
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llm-firewall-config
+  namespace: llm-firewall
+  labels:
+    app: llm-firewall
+data:
+  # Gateway configuration
+  NODE_ENV: "production"
+  GATEWAY_PORT: "3000"
+  GATEWAY_HOST: "0.0.0.0"
+  
+  # Analyzer configuration
+  ANALYZER_HOST: "analyzer-service"
+  ANALYZER_PORT: "50051"
+  PII_CONFIDENCE_THRESHOLD: "0.7"
+  ENABLE_PROMPT_INJECTION_DETECTION: "true"
+  
+  # Redis configuration
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+  
+  # PostgreSQL configuration
+  POSTGRES_HOST: "postgres-service"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "firewall_audit"
+  
+  # Security settings
+  MIN_CONTENT_LENGTH: "10"
+  MAX_CONTENT_LENGTH: "100000"
+  
+  # Rate limiting
+  RATE_LIMIT_ENABLED: "true"
+  RATE_LIMIT_GLOBAL: "10000"
+  RATE_LIMIT_PER_IP: "100"
+  RATE_LIMIT_PER_API_KEY: "1000"
+  
+  # Observability
+  OBSERVABILITY_ENABLED: "true"
+  PROMETHEUS_PORT: "9090"
+  LOG_LEVEL: "info"
+  
+  # Service metadata
+  SERVICE_NAME: "llm-firewall-gateway"
+  SERVICE_VERSION: "1.0.0"
+  DEPLOYMENT_ENVIRONMENT: "production"

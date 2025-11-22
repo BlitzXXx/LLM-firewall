@@ -1,0 +1,31 @@
+# =============================================================================
+# Gateway Service - LoadBalancer for external traffic
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-service
+  namespace: llm-firewall
+  labels:
+    app: llm-firewall
+    component: gateway
+  annotations:
+    # Cloud provider load balancer annotations (AWS example)
+    # service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    # service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+spec:
+  type: LoadBalancer
+  sessionAffinity: None
+  
+  selector:
+    app: llm-firewall
+    component: gateway
+  
+  ports:
+  - name: http
+    port: 80
+    targetPort: 3000
+    protocol: TCP
+  
+  # Optional: Static load balancer IP
+  # loadBalancerIP: 203.0.113.1

@@ -1,0 +1,47 @@
+# =============================================================================
+# RBAC Configuration - ServiceAccount and Roles
+# =============================================================================
+
+# Service Account for LLM Firewall pods
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: llm-firewall-sa
+  namespace: llm-firewall
+  labels:
+    app: llm-firewall
+
+---
+# Role for accessing ConfigMaps and Secrets
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: llm-firewall-role
+  namespace: llm-firewall
+  labels:
+    app: llm-firewall
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get"]
+
+---
+# RoleBinding to attach Role to ServiceAccount
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: llm-firewall-rolebinding
+  namespace: llm-firewall
+  labels:
+    app: llm-firewall
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: llm-firewall-role
+subjects:
+- kind: ServiceAccount
+  name: llm-firewall-sa
+  namespace: llm-firewall

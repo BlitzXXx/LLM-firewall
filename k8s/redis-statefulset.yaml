@@ -1,0 +1,126 @@
+# =============================================================================
+# Redis StatefulSet - Distributed Rate Limiting
+# Single replica with persistent storage
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-service
+  namespace: llm-firewall
+  labels:
+    app: llm-firewall
+    component: redis
+spec:
+  type: ClusterIP
+  clusterIP: None # Headless service for StatefulSet
+  
+  selector:
+    app: llm-firewall
+    component: redis
+  
+  ports:
+  - name: redis
+    port: 6379
+    targetPort: 6379
+    protocol: TCP
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: llm-firewall
+  labels:
+    app: llm-firewall
+    component: redis
+    tier: cache
+spec:
+  serviceName: redis-service
+  replicas: 1
+  
+  selector:
+    matchLabels:
+      app: llm-firewall
+      component: redis
+  
+  template:
+    metadata:
+      labels:
+        app: llm-firewall
+        component: redis
+        tier: cache
+    
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        imagePullPolicy: IfNotPresent
+        
+        ports:
+        - name: redis
+          containerPort: 6379
+          protocol: TCP
+        
+        command:
+        - redis-server
+        - --appendonly
+        - "yes"
+        - --appendfsync
+        - everysec
+        - --maxmemory
+        - 256mb
+        - --maxmemory-policy
+        - allkeys-lru
+        
+        # Resource limits
+        resources:
+          requests:
+            cpu: 250m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        
+        # Liveness probe
+        livenessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 3
+        
+        # Readiness probe
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 3
+        
+        # Volume mounts
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+  
+  # Volume claim templates
+  volumeClaimTemplates:
+  - metadata:
+      name: redis-data
+      labels:
+        app: llm-firewall
+        component: redis
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 10Gi
+      # storageClassName: fast-ssd # Optional: specify storage class

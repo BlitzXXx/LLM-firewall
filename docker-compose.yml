@@ -1,0 +1,284 @@
+version: '3.9'
+
+# =============================================================================
+# LLM Firewall - Complete Stack for Local Development
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Gateway Service (Node.js + Fastify)
+  # ---------------------------------------------------------------------------
+  gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    container_name: llm-firewall-gateway
+    ports:
+      - "3000:3000"
+    environment:
+      # Service configuration
+      NODE_ENV: ${NODE_ENV:-development}
+      GATEWAY_PORT: 3000
+      GATEWAY_HOST: 0.0.0.0
+
+      # Analyzer service connection
+      ANALYZER_HOST: analyzer
+      ANALYZER_PORT: 50051
+
+      # Redis configuration
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+
+      # PostgreSQL configuration
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-firewall_audit}
+      POSTGRES_USER: ${POSTGRES_USER:-firewall}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-firewall_password}
+
+      # Security settings
+      MIN_CONTENT_LENGTH: ${MIN_CONTENT_LENGTH:-10}
+      MAX_CONTENT_LENGTH: ${MAX_CONTENT_LENGTH:-100000}
+
+      # Rate limiting
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      RATE_LIMIT_GLOBAL: ${RATE_LIMIT_GLOBAL:-10000}
+      RATE_LIMIT_PER_IP: ${RATE_LIMIT_PER_IP:-100}
+      RATE_LIMIT_PER_API_KEY: ${RATE_LIMIT_PER_API_KEY:-1000}
+
+      # Observability
+      OBSERVABILITY_ENABLED: ${OBSERVABILITY_ENABLED:-true}
+      PROMETHEUS_PORT: 9090
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+
+      # LLM Provider (for future phases)
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    depends_on:
+      analyzer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - firewall-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 40s
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+  # ---------------------------------------------------------------------------
+  # Analyzer Service (Python + Presidio)
+  # ---------------------------------------------------------------------------
+  analyzer:
+    build:
+      context: ./analyzer
+      dockerfile: Dockerfile
+    container_name: llm-firewall-analyzer
+    ports:
+      - "50051:50051"
+    environment:
+      # Service configuration
+      ANALYZER_PORT: 50051
+      ANALYZER_HOST: 0.0.0.0
+
+      # PII detection settings
+      PII_CONFIDENCE_THRESHOLD: ${PII_CONFIDENCE_THRESHOLD:-0.7}
+      ENABLE_PROMPT_INJECTION_DETECTION: ${ENABLE_PROMPT_INJECTION_DETECTION:-true}
+
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PYTHONUNBUFFERED: 1
+    networks:
+      - firewall-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/grpc_health_probe", "-addr=:50051"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    # Resource limits (Presidio needs more memory)
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+
+  # ---------------------------------------------------------------------------
+  # Redis (Distributed Rate Limiting)
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: llm-firewall-redis
+    ports:
+      - "6379:6379"
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    networks:
+      - firewall-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL (Audit Logs)
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: llm-firewall-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-firewall_audit}
+      POSTGRES_USER: ${POSTGRES_USER:-firewall}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-firewall_password}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - firewall-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-firewall}"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+  # ---------------------------------------------------------------------------
+  # Prometheus (Metrics Collection)
+  # ---------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: llm-firewall-prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    networks:
+      - firewall-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # ---------------------------------------------------------------------------
+  # Grafana (Metrics Visualization)
+  # ---------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:latest
+    container_name: llm-firewall-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_INSTALL_PLUGINS: ""
+      GF_AUTH_ANONYMOUS_ENABLED: ${GRAFANA_ANONYMOUS_ENABLED:-false}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning
+      - ./docs/grafana-dashboard.json:/var/lib/grafana/dashboards/firewall-dashboard.json
+    depends_on:
+      - prometheus
+    networks:
+      - firewall-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  firewall-net:
+    driver: bridge
+    name: llm-firewall-network
+
+# =============================================================================
+# Volumes (Persistent Data)
+# =============================================================================
+volumes:
+  redis-data:
+    name: llm-firewall-redis-data
+  postgres-data:
+    name: llm-firewall-postgres-data
+  prometheus-data:
+    name: llm-firewall-prometheus-data
+  grafana-data:
+    name: llm-firewall-grafana-data

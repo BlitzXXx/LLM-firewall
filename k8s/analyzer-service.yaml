@@ -1,0 +1,24 @@
+# =============================================================================
+# Analyzer Service - ClusterIP (internal only)
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: analyzer-service
+  namespace: llm-firewall
+  labels:
+    app: llm-firewall
+    component: analyzer
+spec:
+  type: ClusterIP
+  sessionAffinity: None
+  
+  selector:
+    app: llm-firewall
+    component: analyzer
+  
+  ports:
+  - name: grpc
+    port: 50051
+    targetPort: 50051
+    protocol: TCP

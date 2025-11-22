@@ -1,0 +1,189 @@
+# =============================================================================
+# PostgreSQL StatefulSet - Audit Logs
+# Single replica with persistent storage and init script
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-service
+  namespace: llm-firewall
+  labels:
+    app: llm-firewall
+    component: postgres
+spec:
+  type: ClusterIP
+  clusterIP: None # Headless service for StatefulSet
+  
+  selector:
+    app: llm-firewall
+    component: postgres
+  
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: 5432
+    protocol: TCP
+
+---
+# ConfigMap for PostgreSQL init script
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init-script
+  namespace: llm-firewall
+  labels:
+    app: llm-firewall
+    component: postgres
+data:
+  init.sql: |
+    -- Enable UUID extension
+    CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+    -- Create audit_logs table
+    CREATE TABLE IF NOT EXISTS audit_logs (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        request_id UUID NOT NULL,
+        timestamp TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        client_ip INET NOT NULL,
+        api_key_hash VARCHAR(64),
+        user_agent TEXT,
+        request_path VARCHAR(255) NOT NULL,
+        http_method VARCHAR(10) NOT NULL,
+        request_body_size INTEGER,
+        detected_issues JSONB DEFAULT '[]'::jsonb,
+        is_blocked BOOLEAN NOT NULL DEFAULT false,
+        block_reason VARCHAR(100),
+        security_confidence FLOAT,
+        response_status INTEGER NOT NULL,
+        latency_ms INTEGER NOT NULL,
+        metadata JSONB DEFAULT '{}'::jsonb
+    );
+
+    -- Create indexes
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs (timestamp DESC);
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_client_ip ON audit_logs (client_ip);
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_is_blocked ON audit_logs (is_blocked) WHERE is_blocked = true;
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_request_id ON audit_logs (request_id);
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_detected_issues ON audit_logs USING gin (detected_issues);
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: llm-firewall
+  labels:
+    app: llm-firewall
+    component: postgres
+    tier: database
+spec:
+  serviceName: postgres-service
+  replicas: 1
+  
+  selector:
+    matchLabels:
+      app: llm-firewall
+      component: postgres
+  
+  template:
+    metadata:
+      labels:
+        app: llm-firewall
+        component: postgres
+        tier: database
+    
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:16-alpine
+        imagePullPolicy: IfNotPresent
+        
+        ports:
+        - name: postgres
+          containerPort: 5432
+          protocol: TCP
+        
+        # Environment variables from Secret
+        env:
+        - name: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: llm-firewall-config
+              key: POSTGRES_DB
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: llm-firewall-secrets
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: llm-firewall-secrets
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_INITDB_ARGS
+          value: "--encoding=UTF8 --locale=C"
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        
+        # Resource limits
+        resources:
+          requests:
+            cpu: 500m
+            memory: 256Mi
+          limits:
+            cpu: 1000m
+            memory: 512Mi
+        
+        # Liveness probe
+        livenessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - $(POSTGRES_USER)
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 3
+        
+        # Readiness probe
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - $(POSTGRES_USER)
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 3
+        
+        # Volume mounts
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+        - name: init-script
+          mountPath: /docker-entrypoint-initdb.d
+      
+      # Volumes
+      volumes:
+      - name: init-script
+        configMap:
+          name: postgres-init-script
+  
+  # Volume claim templates
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-data
+      labels:
+        app: llm-firewall
+        component: postgres
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 50Gi
+      # storageClassName: fast-ssd # Optional: specify storage class
