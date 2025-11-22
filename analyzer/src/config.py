@@ -56,6 +56,20 @@ class AnalyzerConfig:
             os.getenv("SPECIAL_CHAR_THRESHOLD", "0.1")
         )
 
+        # ML Jailbreak Detection Configuration (Phase 5.1)
+        self.ml_jailbreak_enabled: bool = (
+            os.getenv("ML_JAILBREAK_ENABLED", "true").lower() == "true"
+        )
+        self.ml_jailbreak_model: str = os.getenv(
+            "ML_JAILBREAK_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
+        )
+        self.ml_jailbreak_threshold: float = float(
+            os.getenv("ML_JAILBREAK_THRESHOLD", "0.55")
+        )
+        self.ml_ab_testing_enabled: bool = (
+            os.getenv("ML_AB_TESTING_ENABLED", "true").lower() == "true"
+        )
+
         # Content Limits
         self.max_content_length: int = int(os.getenv("MAX_CONTENT_LENGTH", "10240"))
         self.min_content_length: int = int(os.getenv("MIN_CONTENT_LENGTH", "1"))

@@ -54,6 +54,7 @@ enum IssueType {
   JAILBREAK = 12;               // Jailbreak attempts
   EXCESSIVE_SPECIAL_CHARS = 13; // Suspicious character patterns
   ENCODED_PAYLOAD = 14;         // Base64/ROT13 encoded content
+  ML_JAILBREAK = 15;            // ML-detected jailbreak (Phase 5.1)
 }
 
 // Health check request

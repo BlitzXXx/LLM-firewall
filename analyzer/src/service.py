@@ -17,7 +17,7 @@ from .logger import (
     log_error,
     log_security_event,
 )
-from .detectors import pii_detector, prompt_injection_detector
+from .detectors import pii_detector, prompt_injection_detector, ml_jailbreak_detector, content_anonymizer
 
 # Service start time for uptime tracking
 SERVICE_START_TIME = time.time()
@@ -146,13 +146,15 @@ class FirewallServicer(firewall_pb2_grpc.FirewallServiceServicer):
                         types=[issue["type"] for issue in pii_issues],
                     )
 
-            # Phase 2.2 - Prompt Injection Detection
+            # Phase 2.2 - Prompt Injection Detection (Regex-based)
+            regex_issues = []
             if config.feature_prompt_injection and prompt_injection_detector:
                 (
                     injection_issues,
                     injection_confidence,
                 ) = prompt_injection_detector.detect(request.content)
                 if injection_issues:
+                    regex_issues = injection_issues
                     all_issues.extend(injection_issues)
                     confidence_scores.append(injection_confidence)
                     log_security_event(
@@ -161,6 +163,45 @@ class FirewallServicer(firewall_pb2_grpc.FirewallServiceServicer):
                         request_id,
                         count=len(injection_issues),
                         categories=[issue.get("category") for issue in injection_issues],
+                    )
+
+            # Phase 5.1 - ML-Based Jailbreak Detection
+            ml_issues = []
+            ml_metadata = {}
+            if config.feature_ml_jailbreak and ml_jailbreak_detector:
+                (
+                    ml_jailbreak_issues,
+                    ml_confidence,
+                    ml_metadata,
+                ) = ml_jailbreak_detector.detect(request.content)
+                if ml_jailbreak_issues:
+                    ml_issues = ml_jailbreak_issues
+
+                    # A/B Testing: Compare regex vs ML detection
+                    if config.ml_ab_testing_enabled:
+                        regex_detected = len(regex_issues) > 0
+                        ml_detected = len(ml_issues) > 0
+
+                        # Log A/B testing results
+                        log_security_event(
+                            self.logger,
+                            "ML_AB_TEST",
+                            request_id,
+                            regex_detected=regex_detected,
+                            ml_detected=ml_detected,
+                            agreement=(regex_detected == ml_detected),
+                            ml_metadata=ml_metadata,
+                        )
+
+                    # Add ML issues to all issues
+                    all_issues.extend(ml_jailbreak_issues)
+                    confidence_scores.append(ml_confidence)
+                    log_security_event(
+                        self.logger,
+                        "ML_JAILBREAK_DETECTED",
+                        request_id,
+                        count=len(ml_jailbreak_issues),
+                        ml_metadata=ml_metadata,
                     )
 
             # Determine if content is safe
@@ -251,6 +292,7 @@ class FirewallServicer(firewall_pb2_grpc.FirewallServiceServicer):
             "JAILBREAK": firewall_pb2.JAILBREAK,
             "EXCESSIVE_SPECIAL_CHARS": firewall_pb2.EXCESSIVE_SPECIAL_CHARS,
             "ENCODED_PAYLOAD": firewall_pb2.ENCODED_PAYLOAD,
+            "ML_JAILBREAK": firewall_pb2.ML_JAILBREAK,
         }
         return type_mapping.get(type_str, firewall_pb2.UNKNOWN)
 
