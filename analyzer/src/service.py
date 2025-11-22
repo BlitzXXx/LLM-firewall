@@ -17,6 +17,7 @@ from .logger import (
     log_error,
     log_security_event,
 )
+from .detectors import pii_detector, prompt_injection_detector
 
 # Service start time for uptime tracking
 SERVICE_START_TIME = time.time()
@@ -101,11 +102,8 @@ class FirewallServicer(firewall_pb2_grpc.FirewallServiceServicer):
         context: grpc.ServicerContext,
     ) -> firewall_pb2.CheckContentResponse:
         """
-        Check content for security issues (STUB - Phase 1.3)
-        Returns is_safe=True with empty detections for now
-
-        Full implementation will be added in Phase 2.1 (PII Detection)
-        and Phase 2.2 (Prompt Injection Detection)
+        Check content for security issues (Phase 2 - Full Implementation)
+        Detects PII and prompt injection attempts
 
         Args:
             request: CheckContentRequest with content to analyze
@@ -127,17 +125,75 @@ class FirewallServicer(firewall_pb2_grpc.FirewallServiceServicer):
                 metadata=dict(request.metadata),
             )
 
-            # TODO: Phase 2.1 - Implement PII detection using Presidio
-            # TODO: Phase 2.2 - Implement prompt injection detection
-            # TODO: Phase 5.2 - Implement dynamic anonymization
+            all_issues = []
+            redacted_text = request.content
+            confidence_scores = []
 
-            # For skeleton phase, always return safe
-            # This is intentional - we're just testing gRPC communication
+            # Phase 2.1 - PII Detection
+            if config.feature_pii_detection and pii_detector:
+                pii_issues, pii_redacted, pii_confidence = pii_detector.detect(
+                    request.content
+                )
+                if pii_issues:
+                    all_issues.extend(pii_issues)
+                    redacted_text = pii_redacted
+                    confidence_scores.append(pii_confidence)
+                    log_security_event(
+                        self.logger,
+                        "PII_DETECTED",
+                        request_id,
+                        count=len(pii_issues),
+                        types=[issue["type"] for issue in pii_issues],
+                    )
+
+            # Phase 2.2 - Prompt Injection Detection
+            if config.feature_prompt_injection and prompt_injection_detector:
+                (
+                    injection_issues,
+                    injection_confidence,
+                ) = prompt_injection_detector.detect(request.content)
+                if injection_issues:
+                    all_issues.extend(injection_issues)
+                    confidence_scores.append(injection_confidence)
+                    log_security_event(
+                        self.logger,
+                        "PROMPT_INJECTION_DETECTED",
+                        request_id,
+                        count=len(injection_issues),
+                        categories=[issue.get("category") for issue in injection_issues],
+                    )
+
+            # Determine if content is safe
+            is_safe = len(all_issues) == 0
+
+            # Calculate overall confidence score
+            if confidence_scores:
+                overall_confidence = sum(confidence_scores) / len(confidence_scores)
+            else:
+                overall_confidence = 1.0
+
+            # Convert issues to protobuf format
+            proto_issues = []
+            for issue in all_issues:
+                # Map issue type to enum
+                issue_type = self._map_issue_type(issue["type"])
+
+                proto_issue = firewall_pb2.DetectedIssue(
+                    type=issue_type,
+                    text=issue["text"][:100],  # Truncate for safety
+                    start=issue["start"],
+                    end=issue["end"],
+                    confidence=issue["confidence"],
+                    replacement=issue.get("replacement", ""),
+                )
+                proto_issues.append(proto_issue)
+
+            # Build response
             response = firewall_pb2.CheckContentResponse(
-                is_safe=True,  # Mock: Always safe in skeleton phase
-                redacted_text=request.content,  # Mock: No redaction yet
-                detected_issues=[],  # Mock: No issues detected
-                confidence_score=1.0,  # Mock: 100% confidence (no real analysis)
+                is_safe=is_safe,
+                redacted_text=redacted_text,
+                detected_issues=proto_issues,
+                confidence_score=overall_confidence,
                 request_id=request_id,
             )
 
@@ -168,6 +224,35 @@ class FirewallServicer(firewall_pb2_grpc.FirewallServiceServicer):
                 confidence_score=0.0,
                 request_id=request_id,
             )
+
+    def _map_issue_type(self, type_str: str) -> int:
+        """
+        Map issue type string to protobuf enum
+
+        Args:
+            type_str: Issue type as string
+
+        Returns:
+            Protobuf enum value
+        """
+        type_mapping = {
+            "API_KEY": firewall_pb2.API_KEY,
+            "EMAIL": firewall_pb2.EMAIL,
+            "PHONE": firewall_pb2.PHONE,
+            "PHONE_NUMBER": firewall_pb2.PHONE,
+            "SSN": firewall_pb2.SSN,
+            "CREDIT_CARD": firewall_pb2.CREDIT_CARD,
+            "IP_ADDRESS": firewall_pb2.IP_ADDRESS,
+            "PERSON": firewall_pb2.PERSON,
+            "LOCATION": firewall_pb2.LOCATION,
+            "URL": firewall_pb2.URL,
+            "PASSWORD": firewall_pb2.PASSWORD,
+            "PROMPT_INJECTION": firewall_pb2.PROMPT_INJECTION,
+            "JAILBREAK": firewall_pb2.JAILBREAK,
+            "EXCESSIVE_SPECIAL_CHARS": firewall_pb2.EXCESSIVE_SPECIAL_CHARS,
+            "ENCODED_PAYLOAD": firewall_pb2.ENCODED_PAYLOAD,
+        }
+        return type_mapping.get(type_str, firewall_pb2.UNKNOWN)
 
     def _get_request_id(self, context: grpc.ServicerContext) -> str:
         """

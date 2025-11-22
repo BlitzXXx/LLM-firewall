@@ -4,6 +4,7 @@
  */
 
 import { logSecurityEvent } from '../logger.js';
+import { analyzerClient } from '../grpc-client.js';
 
 /**
  * Chat completions route
@@ -121,11 +122,11 @@ export default async function chatRoutes(fastify, options) {
       );
     }
 
-    // Extract user content for logging
+    // Extract user content for analysis
     const userMessages = messages.filter(msg => msg.role === 'user');
-    const userContent = userMessages.map(msg => msg.content).join(' ');
+    const userContent = userMessages.map(msg => msg.content).join('\n');
 
-    // Log the request (for debugging in skeleton phase)
+    // Log the request
     fastify.log.info({
       requestId: request.id,
       model,
@@ -136,30 +137,95 @@ export default async function chatRoutes(fastify, options) {
       stream,
     }, 'Chat completion request received');
 
-    // TODO: Phase 2.3 - Implement actual security checks:
-    // 1. Call analyzer service via gRPC to check content
-    // 2. If is_safe=false, return 403 with detected issues
-    // 3. If is_safe=true, forward to LLM provider
-
-    // For skeleton phase, return 501 Not Implemented
-    reply.status(501);
-    return {
-      error: {
-        type: 'NotImplementedError',
-        message: 'Chat completion endpoint is not yet implemented. This is a skeleton service. Full implementation will be added in Phase 2.3 (Gateway-Analyzer gRPC Integration).',
+    try {
+      // Phase 2.3 - Call Analyzer service to check content
+      const analysisResult = await analyzerClient.checkContent({
+        content: userContent,
         requestId: request.id,
-        timestamp: new Date().toISOString(),
-        details: {
-          phase: 'Phase 1.2 - Gateway Service Skeleton',
-          nextPhase: 'Phase 2.3 - Gateway-Analyzer gRPC Integration',
-          receivedRequest: {
-            model,
-            messageCount: messages.length,
-            contentLength: totalContentLength,
+        metadata: {
+          client_ip: request.ip,
+          user_agent: request.headers['user-agent'] || 'unknown',
+          model: model || 'unknown',
+        },
+      });
+
+      // Check if content is safe
+      if (!analysisResult.is_safe) {
+        // Content is not safe - return 403 with detected issues
+        logSecurityEvent(
+          'CONTENT_BLOCKED',
+          {
+            requestId: request.id,
+            detectedIssuesCount: analysisResult.detected_issues.length,
+            confidenceScore: analysisResult.confidence_score,
+          },
+          request
+        );
+
+        // Format detected issues for response
+        const issues = analysisResult.detected_issues.map(issue => ({
+          type: issue.type,
+          text: issue.text,
+          position: { start: issue.start, end: issue.end },
+          confidence: issue.confidence,
+        }));
+
+        reply.status(403);
+        return {
+          error: {
+            type: 'ContentPolicyViolation',
+            message: 'Content contains potential security issues and was blocked',
+            requestId: request.id,
+            timestamp: new Date().toISOString(),
+            details: {
+              is_safe: false,
+              detected_issues: issues,
+              confidence_score: analysisResult.confidence_score,
+              redacted_preview: analysisResult.redacted_text?.substring(0, 100),
+            },
+          },
+        };
+      }
+
+      // Content is safe - log and proceed
+      fastify.log.info({
+        requestId: request.id,
+        is_safe: true,
+        confidence_score: analysisResult.confidence_score,
+      }, 'Content passed security checks');
+
+      // TODO: Phase 3+ - Forward request to actual LLM provider
+      // For now, return a mock response indicating content was safe
+      reply.status(501);
+      return {
+        error: {
+          type: 'NotImplementedError',
+          message: 'Content passed security checks, but LLM integration is not yet implemented. This will be added in future phases.',
+          requestId: request.id,
+          timestamp: new Date().toISOString(),
+          details: {
+            security_check: {
+              is_safe: true,
+              confidence_score: analysisResult.confidence_score,
+              detected_issues_count: analysisResult.detected_issues.length,
+            },
+            next_phase: 'LLM Provider Integration',
           },
         },
-      },
-    };
+      };
+
+    } catch (error) {
+      // Handle Analyzer service errors
+      fastify.log.error({
+        requestId: request.id,
+        error: error.message,
+        stack: error.stack,
+      }, 'Error calling Analyzer service');
+
+      return reply.serviceUnavailable(
+        'Security analysis service is temporarily unavailable. Please try again later.'
+      );
+    }
   });
 
   /**

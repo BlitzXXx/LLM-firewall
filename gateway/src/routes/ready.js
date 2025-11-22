@@ -3,6 +3,8 @@
  * Checks if the service is ready to accept traffic
  */
 
+import { analyzerClient } from '../grpc-client.js';
+
 /**
  * Readiness check route
  * Verifies that all dependencies are available
@@ -52,19 +54,23 @@ export default async function readyRoutes(fastify, options) {
     };
 
     // Check Analyzer service (gRPC connection)
-    // TODO: Implement actual gRPC health check in Phase 2.3
-    // For now, assume it's available if configured
-    checks.analyzer = true; // Mock: Always true for skeleton phase
+    try {
+      const healthResult = await analyzerClient.healthCheck();
+      checks.analyzer = healthResult && healthResult.status === 1; // 1 = SERVING
+    } catch (error) {
+      fastify.log.warn('Analyzer health check failed:', error.message);
+      checks.analyzer = false;
+    }
 
     // Check Redis connection
     // TODO: Implement actual Redis health check in Phase 3.1
     // For now, assume it's available if configured
-    checks.redis = true; // Mock: Always true for skeleton phase
+    checks.redis = true; // Mock: Always true until Phase 3.1
 
     // Check PostgreSQL connection
     // TODO: Implement actual PostgreSQL health check in Phase 3.2
     // For now, assume it's available if configured
-    checks.postgres = true; // Mock: Always true for skeleton phase
+    checks.postgres = true; // Mock: Always true until Phase 3.2
 
     // Determine overall readiness
     const isReady = Object.values(checks).every(check => check === true);
