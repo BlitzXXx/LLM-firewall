@@ -6,6 +6,7 @@
 import fp from 'fastify-plugin';
 import { rateLimiter } from '../rate-limiter.js';
 import { logger, logSecurityEvent } from '../logger.js';
+import { recordRateLimitViolation } from '../observability.js';
 
 /**
  * Rate limiting plugin
@@ -97,6 +98,9 @@ async function rateLimitPlugin(fastify, options) {
           },
           request
         );
+
+        // Record rate limit violation metric
+        recordRateLimitViolation(rateLimit.type);
 
         // Add Retry-After header
         if (rateLimit.retryAfter) {

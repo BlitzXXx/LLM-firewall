@@ -3,6 +3,10 @@
  * Main entry point for the Fastify server
  */
 
+// Initialize OpenTelemetry BEFORE any other imports
+import { initializeObservability } from './observability.js';
+initializeObservability();
+
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
@@ -12,11 +16,13 @@ import requestIdPlugin from './plugins/request-id.js';
 import errorHandlerPlugin from './plugins/error-handler.js';
 import rateLimitPlugin from './plugins/rate-limit.js';
 import auditLogPlugin from './plugins/audit-log.js';
+import metricsPlugin from './plugins/metrics.js';
 import { pgClient } from './pg-client.js';
 import healthRoutes from './routes/health.js';
 import readyRoutes from './routes/ready.js';
 import chatRoutes from './routes/chat.js';
 import adminRoutes from './routes/admin.js';
+import metricsRoutes from './routes/metrics.js';
 
 /**
  * Create and configure Fastify server
@@ -99,11 +105,23 @@ async function createServer() {
     });
   }
 
+  // 7. Metrics collection (runs after response)
+  if (gatewayConfig.observability.enabled) {
+    await fastify.register(metricsPlugin, {
+      enabled: true,
+    });
+  }
+
   // Register routes
   await fastify.register(healthRoutes);
   await fastify.register(readyRoutes);
   await fastify.register(chatRoutes);
   await fastify.register(adminRoutes);
+
+  // Metrics endpoint (only if observability enabled)
+  if (gatewayConfig.observability.enabled) {
+    await fastify.register(metricsRoutes);
+  }
 
   // Add request timing hook
   fastify.addHook('onRequest', async (request, reply) => {

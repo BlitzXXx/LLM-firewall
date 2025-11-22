@@ -5,6 +5,7 @@
 
 import { logSecurityEvent } from '../logger.js';
 import { analyzerClient } from '../grpc-client.js';
+import { recordPiiDetection, recordPromptInjection } from '../observability.js';
 
 /**
  * Chat completions route
@@ -169,6 +170,21 @@ export default async function chatRoutes(fastify, options) {
           },
           request
         );
+
+        // Record metrics for detected security issues
+        const piiIssues = analysisResult.detected_issues.filter(i =>
+          ['API_KEY', 'EMAIL', 'PHONE', 'SSN', 'CREDIT_CARD', 'IP_ADDRESS', 'PERSON', 'LOCATION'].includes(i.type)
+        );
+        const injectionIssues = analysisResult.detected_issues.filter(i =>
+          ['PROMPT_INJECTION', 'JAILBREAK', 'ENCODED_PAYLOAD', 'EXCESSIVE_SPECIAL_CHARS'].includes(i.type)
+        );
+
+        if (piiIssues.length > 0) {
+          recordPiiDetection(piiIssues.length, piiIssues.map(i => i.type));
+        }
+        if (injectionIssues.length > 0) {
+          recordPromptInjection(injectionIssues.length, injectionIssues.map(i => i.type));
+        }
 
         // Format detected issues for response
         const issues = analysisResult.detected_issues.map(issue => ({
