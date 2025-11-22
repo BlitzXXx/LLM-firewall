@@ -248,6 +248,108 @@
           "name": "Audit Queue Alert",
           "message": "Audit log queue is getting full (>800 items)"
         }
+      },
+      {
+        "id": 13,
+        "title": "ML Jailbreak Detections (Phase 5.1)",
+        "type": "graph",
+        "gridPos": { "x": 0, "y": 40, "w": 12, "h": 8 },
+        "targets": [
+          {
+            "expr": "rate(firewall_ml_jailbreak_detections_total[5m])",
+            "legendFormat": "ML Detections/sec",
+            "refId": "A"
+          },
+          {
+            "expr": "rate(firewall_prompt_injections_total{category=\"direct_injection\"}[5m])",
+            "legendFormat": "Regex Detections/sec",
+            "refId": "B"
+          }
+        ],
+        "yaxes": [
+          { "format": "short", "label": "Detections/sec" },
+          { "format": "short" }
+        ]
+      },
+      {
+        "id": 14,
+        "title": "ML vs Regex Agreement Rate",
+        "type": "stat",
+        "gridPos": { "x": 12, "y": 40, "w": 6, "h": 4 },
+        "targets": [
+          {
+            "expr": "(sum(firewall_ml_ab_test_agreement_total{agreement=\"true\"}) / sum(firewall_ml_ab_test_total)) * 100",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "graphMode": "area",
+          "colorMode": "value",
+          "textMode": "value_and_name",
+          "unit": "percent"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": null, "color": "red" },
+                { "value": 70, "color": "yellow" },
+                { "value": 90, "color": "green" }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 15,
+        "title": "ML Inference Time (ms)",
+        "type": "graph",
+        "gridPos": { "x": 18, "y": 40, "w": 6, "h": 8 },
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, rate(firewall_ml_inference_time_ms_bucket[5m]))",
+            "legendFormat": "P50",
+            "refId": "A"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(firewall_ml_inference_time_ms_bucket[5m]))",
+            "legendFormat": "P95",
+            "refId": "B"
+          },
+          {
+            "expr": "histogram_quantile(0.99, rate(firewall_ml_inference_time_ms_bucket[5m]))",
+            "legendFormat": "P99",
+            "refId": "C"
+          }
+        ],
+        "yaxes": [
+          { "format": "ms", "label": "Inference Time" },
+          { "format": "short" }
+        ],
+        "alert": {
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [60],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": ["C", "5m", "now"]
+              },
+              "reducer": {
+                "params": [],
+                "type": "avg"
+              },
+              "type": "query"
+            }
+          ],
+          "name": "ML Inference Slow",
+          "message": "ML inference P99 latency exceeds 60ms target"
+        }
       }
     ],
     "templating": {
