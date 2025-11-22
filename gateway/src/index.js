@@ -10,6 +10,7 @@ import { gatewayConfig, validateConfig, getConfigSummary } from './config.js';
 import { logger, logStartup, logShutdown } from './logger.js';
 import requestIdPlugin from './plugins/request-id.js';
 import errorHandlerPlugin from './plugins/error-handler.js';
+import rateLimitPlugin from './plugins/rate-limit.js';
 import healthRoutes from './routes/health.js';
 import readyRoutes from './routes/ready.js';
 import chatRoutes from './routes/chat.js';
@@ -80,6 +81,13 @@ async function createServer() {
   await fastify.register(errorHandlerPlugin, {
     includeStackTrace: gatewayConfig.env === 'development',
   });
+
+  // 5. Rate limiting (must be registered before routes)
+  if (gatewayConfig.features.rateLimiting) {
+    await fastify.register(rateLimitPlugin, {
+      enabled: true,
+    });
+  }
 
   // Register routes
   await fastify.register(healthRoutes);

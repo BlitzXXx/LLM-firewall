@@ -4,6 +4,7 @@
  */
 
 import { analyzerClient } from '../grpc-client.js';
+import { redisClient } from '../redis-client.js';
 
 /**
  * Readiness check route
@@ -63,9 +64,12 @@ export default async function readyRoutes(fastify, options) {
     }
 
     // Check Redis connection
-    // TODO: Implement actual Redis health check in Phase 3.1
-    // For now, assume it's available if configured
-    checks.redis = true; // Mock: Always true until Phase 3.1
+    try {
+      checks.redis = await redisClient.healthCheck();
+    } catch (error) {
+      fastify.log.warn('Redis health check failed:', error.message);
+      checks.redis = false;
+    }
 
     // Check PostgreSQL connection
     // TODO: Implement actual PostgreSQL health check in Phase 3.2
