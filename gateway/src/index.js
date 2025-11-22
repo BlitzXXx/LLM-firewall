@@ -11,9 +11,12 @@ import { logger, logStartup, logShutdown } from './logger.js';
 import requestIdPlugin from './plugins/request-id.js';
 import errorHandlerPlugin from './plugins/error-handler.js';
 import rateLimitPlugin from './plugins/rate-limit.js';
+import auditLogPlugin from './plugins/audit-log.js';
+import { pgClient } from './pg-client.js';
 import healthRoutes from './routes/health.js';
 import readyRoutes from './routes/ready.js';
 import chatRoutes from './routes/chat.js';
+import adminRoutes from './routes/admin.js';
 
 /**
  * Create and configure Fastify server
@@ -89,10 +92,18 @@ async function createServer() {
     });
   }
 
+  // 6. Audit logging (runs after response)
+  if (gatewayConfig.features.auditLogging) {
+    await fastify.register(auditLogPlugin, {
+      enabled: true,
+    });
+  }
+
   // Register routes
   await fastify.register(healthRoutes);
   await fastify.register(readyRoutes);
   await fastify.register(chatRoutes);
+  await fastify.register(adminRoutes);
 
   // Add request timing hook
   fastify.addHook('onRequest', async (request, reply) => {
@@ -158,6 +169,15 @@ async function start() {
     // Create server
     server = await createServer();
 
+    // Run database migrations if audit logging is enabled
+    if (gatewayConfig.features.auditLogging) {
+      try {
+        await pgClient.runMigrations();
+      } catch (error) {
+        logger.warn('Database migrations failed, continuing anyway', { error: error.message });
+      }
+    }
+
     // Log startup information
     logStartup({
       serviceName: gatewayConfig.observability.serviceName,
@@ -211,8 +231,18 @@ async function start() {
             process.exit(1);
           }, gatewayConfig.shutdown.timeout);
 
+          // Flush audit logs if enabled
+          if (gatewayConfig.features.auditLogging && server.auditLogger) {
+            await server.auditLogger.flush();
+          }
+
           // Close server gracefully
           await server.close();
+
+          // Close database connections
+          if (gatewayConfig.features.auditLogging) {
+            await pgClient.close();
+          }
 
           clearTimeout(shutdownTimeout);
           logger.info('Server closed gracefully');

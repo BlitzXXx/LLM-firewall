@@ -5,6 +5,7 @@
 
 import { analyzerClient } from '../grpc-client.js';
 import { redisClient } from '../redis-client.js';
+import { pgClient } from '../pg-client.js';
 
 /**
  * Readiness check route
@@ -72,9 +73,12 @@ export default async function readyRoutes(fastify, options) {
     }
 
     // Check PostgreSQL connection
-    // TODO: Implement actual PostgreSQL health check in Phase 3.2
-    // For now, assume it's available if configured
-    checks.postgres = true; // Mock: Always true until Phase 3.2
+    try {
+      checks.postgres = await pgClient.healthCheck();
+    } catch (error) {
+      fastify.log.warn('PostgreSQL health check failed:', error.message);
+      checks.postgres = false;
+    }
 
     // Determine overall readiness
     const isReady = Object.values(checks).every(check => check === true);

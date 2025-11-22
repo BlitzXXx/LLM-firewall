@@ -151,6 +151,14 @@ export default async function chatRoutes(fastify, options) {
 
       // Check if content is safe
       if (!analysisResult.is_safe) {
+        // Set audit context for blocked request
+        request.setAuditContext({
+          is_blocked: true,
+          block_reason: 'CONTENT_POLICY_VIOLATION',
+          detected_issues_count: analysisResult.detected_issues.length,
+          security_confidence: analysisResult.confidence_score,
+        });
+
         // Content is not safe - return 403 with detected issues
         logSecurityEvent(
           'CONTENT_BLOCKED',
