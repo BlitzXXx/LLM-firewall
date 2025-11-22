@@ -1,0 +1,76 @@
+syntax = "proto3";
+
+package firewall;
+
+// Service definition for LLM Firewall
+service FirewallService {
+  // Main content checking RPC
+  rpc CheckContent(CheckContentRequest) returns (CheckContentResponse);
+
+  // Health check RPC for service monitoring
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// Request message for content checking
+message CheckContentRequest {
+  string content = 1;           // The text content to analyze
+  string request_id = 2;        // Unique request identifier for tracing
+  map<string, string> metadata = 3;  // Additional metadata (client_ip, api_key, etc.)
+}
+
+// Response message for content checking
+message CheckContentResponse {
+  bool is_safe = 1;             // Whether the content is safe to proceed
+  string redacted_text = 2;     // Content with PII redacted/anonymized
+  repeated DetectedIssue detected_issues = 3;  // List of security issues found
+  double confidence_score = 4;  // Overall confidence score (0.0 - 1.0)
+  string request_id = 5;        // Echo back the request ID
+}
+
+// Detected security issue
+message DetectedIssue {
+  IssueType type = 1;           // Type of issue detected
+  string text = 2;              // The detected text (may be redacted)
+  int32 start = 3;              // Start position in original text
+  int32 end = 4;                // End position in original text
+  double confidence = 5;        // Confidence score for this detection (0.0 - 1.0)
+  string replacement = 6;       // Replacement text (for redaction)
+}
+
+// Enumeration of detectable issue types
+enum IssueType {
+  UNKNOWN = 0;
+  API_KEY = 1;                  // API keys (OpenAI, Anthropic, etc.)
+  EMAIL = 2;                    // Email addresses
+  PHONE = 3;                    // Phone numbers
+  SSN = 4;                      // Social Security Numbers
+  CREDIT_CARD = 5;              // Credit card numbers
+  IP_ADDRESS = 6;               // IP addresses
+  PERSON = 7;                   // Person names
+  LOCATION = 8;                 // Geographic locations
+  URL = 9;                      // URLs that might contain sensitive data
+  PASSWORD = 10;                // Passwords or secrets
+  PROMPT_INJECTION = 11;        // Prompt injection attempts
+  JAILBREAK = 12;               // Jailbreak attempts
+  EXCESSIVE_SPECIAL_CHARS = 13; // Suspicious character patterns
+  ENCODED_PAYLOAD = 14;         // Base64/ROT13 encoded content
+}
+
+// Health check request
+message HealthCheckRequest {
+  string service = 1;           // Service name to check (optional)
+}
+
+// Health check response
+message HealthCheckResponse {
+  enum ServingStatus {
+    UNKNOWN = 0;
+    SERVING = 1;
+    NOT_SERVING = 2;
+    SERVICE_UNKNOWN = 3;        // Used if the service is not known
+  }
+
+  ServingStatus status = 1;     // Current serving status
+  string version = 2;           // Service version
+  int64 uptime_seconds = 3;     // Service uptime in seconds
+}
